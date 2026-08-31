@@ -104,6 +104,7 @@
   td.price { background: var(--blue-bg); font-weight: 600; color: var(--blue-text); }
   td.price.alt { background: var(--green-bg); color: var(--green-text); }
   td.price.warm { background: var(--orange-bg); color: var(--orange-text); }
+  td.price.ss-nodisc { background: var(--empty-bg); color: var(--text-faint); font-weight: 400; }
   td.dash, td.empty { color: var(--text-faint); background: var(--empty-bg); }
   img.lens-thumb { width: 100%; height: auto; max-width: 100%; object-fit: contain; border-radius: 8px; display: block; margin: 8px 0 3px; }
   img.result-thumb { width: 130px; max-width: 100%; height: 98px; margin: 6px 0 0; border: 1px solid var(--border); }
@@ -290,6 +291,15 @@
               <option value="outdoor">ขับรถ / อยู่กลางแจ้งบ่อย</option>
               <option value="near">ใช้จอคอมพิวเตอร์ / ระยะใกล้เป็นหลัก</option>
             </select>
+          </div>
+        </div>
+
+        <div class="ss-row">
+          <div class="ss-field">
+            <label class="ss-label">ส่วนลดพิเศษ (%)</label>
+            <div class="ss-inputrow">
+              <input type="number" step="1" min="0" max="100" id="discountValue" placeholder="ไม่ระบุ" style="width:90px">
+            </div>
           </div>
         </div>
 
@@ -906,6 +916,7 @@
     var indexSelect = document.getElementById('indexSelect');
     var addValue = document.getElementById('addValue');
     var tierSelect = document.getElementById('tierSelect');
+    var discountValue = document.getElementById('discountValue');
     var brandChecks = document.querySelectorAll('.ss-brand');
     var resultsWrap = document.getElementById('ssResultsWrap');
     var filterBtn = document.getElementById('ssFilterBtn');
@@ -913,6 +924,10 @@
     if (!filterBtn) return; // section not present
 
     var EMPTY_MSG = '<p class="ss-empty">กรอกค่าสายตา หรือเลือกตัวกรองด้านบน (แบรนด์ / Index / ADD / ระดับราคา / ลักษณะการใช้งาน) แล้วกดค้นหา เพื่อดูรุ่นเลนส์ที่รองรับจากทุกแบรนด์</p>';
+
+    // Cache of the last computed results so typing a discount % can re-render
+    // instantly without re-running the whole prescription filter.
+    var lastGroups = null, lastTotalCount = 0, lastNoInput = true;
 
     function fmtMoney(n) {
       return Math.round(n).toLocaleString('en-US');
@@ -1014,6 +1029,7 @@
       var totalCount = groups.reduce(function (sum, g) { return sum + g.items.length; }, 0);
       var noInputGiven = odSphV === 0 && odCylV === 0 && osSphV === 0 && osCylV === 0 &&
         !indexWant && !hasAdd && !tier && wantBrands.length === 0 && !usage && !wantTransition;
+      lastGroups = groups; lastTotalCount = totalCount; lastNoInput = noInputGiven;
       renderResults(groups, totalCount, noInputGiven);
     }
 
@@ -1026,6 +1042,10 @@
         resultsWrap.innerHTML = '<p class="ss-empty">ไม่พบรุ่นเลนส์ที่ตรงกับค่าสายตานี้ในฐานข้อมูล ลองปรับค่า SPH/CYL หรือเงื่อนไขการค้นหา หรือดูตารางราคาแต่ละแบรนด์โดยตรง</p>';
         return;
       }
+      var discRaw = parseFloat(discountValue.value);
+      var hasDisc = discountValue.value !== '' && !isNaN(discRaw) && discRaw > 0;
+      var discPct = hasDisc ? Math.min(100, Math.max(0, discRaw)) : 0;
+
       var rows = groups.map(function (g) {
         var line2 = (g.model && g.model !== g.design) ? '<span class="model-desc">' + g.model + '</span>' : '';
         var info = SALE_MODEL_INFO[g.brand + '|' + g.design + '|' + g.model];
@@ -1039,20 +1059,29 @@
             '<td class="text-col" rowspan="' + span + '"><span class="model-name">' + g.brand + ' ' + g.design + '</span>' + line2 + descHtml + imgHtml + '</td>' +
             '<td rowspan="' + span + '">' + (g.index || '—') + '</td>' +
             '<td class="wrap" rowspan="' + span + '">' + rangeHtml + '</td>' : '';
+          var discCell = hasDisc ?
+            '<td class="price alt">' + fmtMoney(p.value * (1 - discPct / 100)) + '</td>' :
+            '<td class="price alt ss-nodisc">-</td>';
           return '<tr>' + lead +
             '<td class="wrap">' + p.label + tag + '</td>' +
             '<td class="price' + (p.photo ? ' warm' : '') + '">' + fmtMoney(p.value) + '</td>' +
+            discCell +
             '</tr>';
         }).join('');
       }).join('');
       resultsWrap.innerHTML =
         '<p class="ss-count">พบ ' + totalCount + ' รายการ เรียงจากราคาต่ำสุด &mdash; ช่องราคาสีส้มคือตัวเลือก Transition</p>' +
         '<div class="card"><div class="table-scroll ss-results-scroll"><table><thead><tr class="col-row">' +
-        '<th class="text-col">แบรนด์ / รุ่น</th><th>INDEX</th><th>ช่วงค่าสายตาที่รองรับ</th><th>ตัวเลือก</th><th>ราคา</th>' +
+        '<th class="text-col">แบรนด์ / รุ่น</th><th>INDEX</th><th>ช่วงค่าสายตาที่รองรับ</th><th>ตัวเลือก</th><th>ราคา</th><th>ส่วนลดพิเศษ</th>' +
         '</tr></thead><tbody>' + rows + '</tbody></table></div></div>';
     }
 
     filterBtn.addEventListener('click', runFilter);
+    // Discount % is a display overlay on the current results, not a search filter --
+    // re-render instantly from the cached last results instead of re-running the filter.
+    discountValue.addEventListener('input', function () {
+      renderResults(lastGroups, lastTotalCount, lastNoInput);
+    });
     clearBtn.addEventListener('click', function () {
       odSph.value = ''; osSph.value = '';
       odCyl.value = '0'; osCyl.value = '0';
@@ -1062,7 +1091,9 @@
       indexSelect.value = '';
       addValue.value = '';
       tierSelect.value = '';
+      discountValue.value = '';
       brandChecks.forEach(function (cb) { cb.checked = false; });
+      lastGroups = null; lastTotalCount = 0; lastNoInput = true;
       resultsWrap.innerHTML = EMPTY_MSG;
     });
     [odSph, odCyl, osSph, osCyl].forEach(function (inp) {
